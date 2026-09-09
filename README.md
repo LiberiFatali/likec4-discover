@@ -24,21 +24,24 @@ Prereqs: `node >= 20` for TS/JS repos, `python3` for Python repos (stdlib only).
 
 ## Use
 
+One-liner (best-effort auto-labeling — raw titles, all proposals promoted):
+
 ```bash
-# 1. Scan the target repo -> IR
-node <skill>/scripts/scan.mjs --root <target-repo> --out /tmp/ir.json
+<skill>/scripts/discover.sh quick --root <target-repo> --out ./generated --system <name>
+```
 
-# 2. Label: assign FQNs, titles, wire relationships, promote/drop proposals
-#    (see skills/likec4-discover/references/ir-schema.md) -> /tmp/ir.labeled.json
+Curated (label names, relationships, and proposals yourself between scan and emit):
 
-# 3. Emit the model
-node <skill>/scripts/emit.mjs --in /tmp/ir.labeled.json --out ./generated --system <name>
+```bash
+<skill>/scripts/discover.sh scan --root <target-repo> --out /tmp/ir.json
+# ...label /tmp/ir.json (see skills/likec4-discover/references/ir-schema.md)
+<skill>/scripts/discover.sh emit --in /tmp/ir.labeled.json --out ./generated --system <name>  # emits + validates
+```
 
-# 4. Validate (gate: valid == true, filteredErrors == 0)
-npx -y likec4@1.59.3 validate --no-layout --json ./generated
+Preview either result:
 
-# 5. Preview at http://localhost:5173/
-npx -y likec4@1.59.3 start ./generated
+```bash
+npx -y likec4@1.59.3 start ./generated   # http://localhost:5173/
 ```
 
 Stuck? See `skills/likec4-discover/references/troubleshooting.md`.

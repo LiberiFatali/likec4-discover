@@ -39,11 +39,11 @@ check(lines < 350, `SKILL.md ${lines} lines < 350`);
 check(tokens < 5000, `SKILL.md ~${tokens} tokens < 5000`);
 
 // --- layout ---
-for (const p of ["scripts/scan.mjs", "scripts/scan.py", "scripts/emit.mjs",
+for (const p of ["scripts/scan.mjs", "scripts/scan.py", "scripts/emit.mjs", "scripts/discover.sh",
   "references/ir-schema.md", "references/dsl-min.md", "references/validation.md",
   "references/troubleshooting.md", "assets/templates/spec.c4", "assets/templates/model.c4",
   "assets/templates/views.c4"]) mustExist(p);
-for (const p of ["scripts/scan.mjs", "scripts/scan.py", "scripts/emit.mjs"]) {
+for (const p of ["scripts/scan.mjs", "scripts/scan.py", "scripts/emit.mjs", "scripts/discover.sh"]) {
   try { check((statSync(join(skillDir, p)).mode & 0o111) !== 0, `executable: ${p}`); }
   catch { check(false, `executable: ${p}`); }
 }

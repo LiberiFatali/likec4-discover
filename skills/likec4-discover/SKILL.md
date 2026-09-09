@@ -11,6 +11,14 @@ metadata:
 
 Generate a LikeC4 architecture model from code. Scripts do deterministic work; you do only naming/grouping. Never hand-write DSL syntax.
 
+Quick one-liner (best-effort: raw titles, all proposals promoted, nothing pruned):
+
+```bash
+<skill>/scripts/discover.sh quick --root <repo> --out ./generated --system <name>
+```
+
+For curated output, run the steps below with manual labeling in between.
+
 Requires `likec4-dsl` skill for DSL reference (via `npx skills add https://likec4.dev/`). This skill is write-path only (`scan -> IR -> .c4`); use `@likec4/mcp` for read-path queries.
 
 ## Workflow
@@ -20,11 +28,12 @@ Requires `likec4-dsl` skill for DSL reference (via `npx skills add https://likec
 Run from the repo root:
 
 ```bash
-node <skill>/scripts/scan.mjs --root ./src --out /tmp/ir.json
+<skill>/scripts/discover.sh scan --root ./src --out /tmp/ir.json
 # flags: --root <dir> (default .), --out <file|-> (default stdout),
 #   --max-files 2000, --include-tests (default false),
 #   --include "<glob>" (repeatable, replaces defaults),
 #   --exclude "<glob>" (repeatable, merges with defaults)
+# (calls scripts/scan.mjs; same flags)
 ```
 
 - `scan.mjs` walks TS/JS with node stdlib (import regex + exported class/function names for titles) and spawns `scan.py --root <dir>` once for Python (`ast` stdlib only; skipped automatically when the repo has no `.py` files).
@@ -48,10 +57,9 @@ node <skill>/scripts/scan.mjs --root ./src --out /tmp/ir.json
 ### 3. Emit (deterministic, string template by default)
 
 ```bash
-node <skill>/scripts/emit.mjs --in /tmp/ir.labeled.json --out ./generated
-# optional programmatic cross-check (needs likec4 installed, skips otherwise):
-node <skill>/scripts/emit.mjs --in /tmp/ir.labeled.json --out ./generated --check
-# writes ./generated/spec.c4, ./generated/model.c4, ./generated/views.c4
+<skill>/scripts/discover.sh emit --in /tmp/ir.labeled.json --out ./generated --system <name>
+# emits spec.c4/model.c4/views.c4, runs --check when likec4 is installed,
+# then validates with the likec4 CLI when available
 ```
 
 - `emit.mjs` has zero dependencies. It sanitizes identifiers, dedupes FQNs, and fails closed on duplicates or bad identifiers. `--check` additionally runs `LikeC4.fromSource().getErrors()` when the `likec4` package is installed (skipped with a note otherwise); template output stays canonical.
@@ -86,7 +94,9 @@ npx -y likec4@1.59.3 start ./generated
 ## File map
 
 - `scripts/scan.mjs`, `scripts/scan.py` — deterministic scanners.
-- `scripts/emit.mjs` — deterministic emitter (template canonical + optional `--check`). Importable (`sanitize`, `emitModel`) with unit tests (`node --test test/*.test.mjs` from repo root).
+- `scripts/discover.sh` — one entry point: `scan` (→ `scan.mjs`), `emit` (→ `emit.mjs --check` + CLI validate when available), and `quick` (scan → `auto-label.mjs` → emit → validate in one go).
+- `scripts/auto-label.mjs` — best-effort labeling for `quick` (prettified titles, import wiring incl. barrels/aliases, all proposals promoted). Reuses `sanitize` from `emit.mjs`; mirrors its default FQN assignment.
+- `scripts/emit.mjs` — deterministic emitter (template canonical + optional `--check`). Importable (`sanitize`, `emitModel`, `checkModel`) with unit tests (`node --test test/*.test.mjs` from repo root).
 - `scripts/scan.py` — deterministic scanner with unit tests (`python3 -m unittest discover -s test` from repo root).
 - `references/ir-schema.md` — IR field table + examples.
 - `references/dsl-min.md` — spec/model/views + FQN rules, condensed.

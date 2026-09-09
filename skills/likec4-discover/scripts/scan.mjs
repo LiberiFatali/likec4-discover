@@ -10,7 +10,7 @@ import { dirname } from "node:path";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_IGNORE_DIRS = new Set(["node_modules", "dist", "build", ".venv", "__pycache__", ".git", "coverage", ".next", "out"]);
 const DEFAULT_EXTS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]);
-const TEST_RE = /(\.test\.|\.spec\.|__tests__|\/tests?\/|_test\.py$|_tests\.py$|\/test_[^/]*\.py$)/;
+const TEST_RE = /(\.test\.|\.spec\.|__tests__|(^|\/)tests?\/|(^|\/)test_[^/]*\.(py|js|ts|mjs|cjs)$|_test\.(py|js|ts)$|_tests\.(py|js|ts)$)/;
 
 function help() {
   console.log(`scan.mjs — scan TS/JS (+ Python via scan.py) to IR JSON
@@ -20,7 +20,7 @@ Options:
   --out <file|->      output file or - for stdout (default -)
   --max-files <n>     max source files (default 2000)
   --include <glob>    repeatable; if given, replaces default extensions
-  --exclude <glob>    repeatable; merged with default ignores (substring match)
+  --exclude <glob>    repeatable; merged with default ignores (glob match)
   --include-tests     include test files (default false)
   -h, --help          show this help`);
 }
@@ -46,13 +46,31 @@ function loadGitignore(root) {
   return readFileSync(p, "utf8").split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => l.replace(/\/$/, ""));
 }
 
-function excluded(rel, ignoreDirs, gitignore, extra) {
-  // rel uses forward slashes (normalized by callers) so matching is OS-independent.
-  const parts = rel.split("/");
+function globToRegExp(pat) {
+  return new RegExp(`^${pat.split("*").map((s) => s.replace(/[.+?^${}()|[\]\\]/g, "\\$&")).join("[^/]*")}$`);
+}
+
+function excluded(rel, ignoreDirs, gitignore, extra, isDir = false) {
+  // rel uses forward slashes (normalized by callers). Segment semantics
+  // (gitignore-like): `data/` matches only a directory segment, never
+  // `database.py`; `--exclude` entries are globs, merged with defaults.
+  const parts = rel.split("/").filter((p) => p && p !== ".");
   if (parts.some((p) => ignoreDirs.has(p))) return true;
   if (parts.some((p) => p.startsWith(".")) && parts[0] !== ".") return true;
-  for (const g of gitignore) if (g && (rel.includes(g))) return true;
-  for (const e of extra) if (e && rel.includes(e.replaceAll("*", ""))) return true;
+  for (const raw of [...gitignore, ...extra]) {
+    if (!raw) continue;
+    const dirOnly = raw.endsWith("/");
+    const pat = dirOnly ? raw.slice(0, -1) : raw;
+    if (!pat.includes("/")) {
+      const rx = globToRegExp(pat);
+      const scope = dirOnly && !isDir ? parts.slice(0, -1) : parts;
+      if (scope.some((s) => rx.test(s))) return true;
+    } else {
+      const rx = globToRegExp(pat);
+      if (rx.test(rel) || (isDir && rx.test(`${rel}/`))) return true;
+      if (dirOnly && (rel === pat || rel.startsWith(`${pat}/`))) return true;
+    }
+  }
   return false;
 }
 
@@ -70,7 +88,7 @@ function walk(root, o, gitignore) {
       try { st = statSync(full); } catch { continue; }
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
-        if (!excluded(rel + "/", DEFAULT_IGNORE_DIRS, gitignore, o.exclude)) stack.push(full);
+        if (!excluded(rel, DEFAULT_IGNORE_DIRS, gitignore, o.exclude, true)) stack.push(full);
       } else if (st.isFile()) {
         if (excluded(rel, DEFAULT_IGNORE_DIRS, gitignore, o.exclude)) continue;
         if (!o.includeTests && TEST_RE.test(rel)) continue;
@@ -137,16 +155,34 @@ function extractTs(src, file = "") {
   }
   // Express/Fastify-style route registrations: app.get('/path', ...) / router.post("...").
   // Path must start with '/' — this excludes lookalikes like headers.get('origin').
-  const routeRe = /([A-Za-z_$][\w$]*)\s*\.\s*(get|post|put|delete|patch|head|options|use|all)\s*\(\s*['"`](\/[^'"`]+)['"`]/g;
+  // Root path '/' alone is valid (second char class is *-quantified).
+  const routeRe = /([A-Za-z_$][\w$]*)\s*\.\s*(get|post|put|delete|patch|head|options|use|all)\s*\(\s*['"`](\/[^'"` ]*)['"`]/g;
   while ((m = routeRe.exec(src))) symbols.push({ name: `${m[2].toUpperCase()} ${m[3]}`, kind: "route", line: at(m.index), route: `${m[2].toUpperCase()} ${m[3]}` });
+  // Chained style: router.route('/path').get(h).post(h) — path lives on .route().
+  // Tail runs to `;` so handler args with parens (e.g. auth('x')) don't cut it off.
+  const chainRe = /\.route\(\s*['"`](\/[^'"` ]*)['"`]\s*\)([^;]*);/g;
+  while ((m = chainRe.exec(src))) {
+    for (const h of m[2].matchAll(/\.\s*(get|post|put|delete|patch|head|options)\s*\(/g)) {
+      const route = `${h[1].toUpperCase()} ${m[1]}`;
+      symbols.push({ name: route, kind: "route", line: at(m.index), route });
+    }
+  }
+  // Arrow/wrapped handlers: const createUser = catchAsync(async (req, res) => ...).
+  // Only when the initializer contains `=>` (skips plain values like `const x = (1+2)`).
+  const arrowRe = /(?:^|[;}\n])\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=(?=[^;]{0,300}=>)/g;
+  while ((m = arrowRe.exec(src))) {
+    if (!symbols.some((s) => s.name === m[1])) symbols.push({ name: m[1], kind: "function", line: at(m.index) });
+  }
   // NestJS-style decorators: @Controller('prefix') class + @Get('path') handler.
   const ctrl = /@Controller\(\s*['"`]([^'"`]*?)['"`]\s*\)/.exec(src);
   const prefix = (ctrl?.[1] || "").replace(/^\/|\/$/g, "");
-  const nestRe = /@(Get|Post|Put|Delete|Patch|Head|Options)\(\s*(?:['"`]([^'"`]*?)['"`]\s*)?\)[^\n]*\n\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(/g;
+  // Additional stacked decorators between route and method (e.g. @HttpCode)
+  // are skipped; the gap must not cross `;`/`{` (stays within the decorator run).
+  const nestRe = /@(Get|Post|Put|Delete|Patch|Head|Options)\(\s*(?:['"`]([^'"`]*?)['"`]\s*)?\)((?:[^\n;{}]*\n)*?)\s*(?:async\s+)?([A-Za-z_$][\w$]*)\s*\(/g;
   while ((m = nestRe.exec(src))) {
     const path = [prefix, (m[2] || "").replace(/^\/|\/$/g, "")].filter(Boolean).join("/");
     const route = `${m[1].toUpperCase()} /${path}`;
-    symbols.push({ name: m[3], kind: "route", line: at(m.index), route });
+    symbols.push({ name: m[4], kind: "route", line: at(m.index), route });
   }
   return { imports, symbols };
 }
@@ -165,7 +201,7 @@ function loadTsconfig(root) {
       target: String((Array.isArray(v) ? v[0] : v) || "").replace(/\/\*$/, "/").replace(/\*$/, ""),
     })).filter((e) => e.prefix);
     paths.sort((a, b) => b.prefix.length - a.prefix.length);
-    return { baseUrl: cfg.baseUrl || "", paths };
+    return { baseUrl: (cfg.baseUrl || "").replace(/\/$/, ""), paths };
   } catch { return { baseUrl: "", paths: [] }; }
 }
 
@@ -174,6 +210,20 @@ function resolveAlias(spec, tsconfig) {
     if (spec.startsWith(prefix)) {
       const rest = spec.slice(prefix.length).replace(/\.(tsx?|jsx?|mjs|cjs)$/, "");
       return `${target}${rest}`.replace(/\/index$/, "");
+    }
+  }
+  return null;
+}
+
+// baseUrl bare imports (e.g. `from 'auth/auth.module'` with baseUrl ./src):
+// resolved only when the target file exists on disk, so npm packages never match.
+function resolveBaseUrl(spec, root, baseUrl) {
+  if (!baseUrl || spec.startsWith(".") || spec.startsWith("/")) return null;
+  const mod = spec.replace(/\.(tsx?|jsx?|mjs|cjs)$/, "");
+  for (const cand of [`${baseUrl}/${mod}`, `${baseUrl}/${mod}/index`]) {
+    for (const ext of ["", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]) {
+      const rel = `${cand}${ext}`.replace(/^\.\//, "");
+      if (existsSync(join(root, rel))) return rel.replace(/\/index\.(tsx?|jsx?|mjs|cjs)$/, "").replace(/\.(tsx?|jsx?|mjs|cjs)$/, "");
     }
   }
   return null;
@@ -206,7 +256,7 @@ for (const full of files) {
   const aliasImports = [];
   for (const spec of imports) {
     if (spec.startsWith(".")) continue;
-    const resolved = resolveAlias(spec, tsconfig);
+    const resolved = resolveAlias(spec, tsconfig) || resolveBaseUrl(spec, args.root, tsconfig.baseUrl);
     if (resolved) aliasImports.push({ from: spec, to: resolved });
   }
   // Barrel files (only `export * from ...`) re-export a real module; flag them so
@@ -248,7 +298,7 @@ function hasPyFiles(root, o, gitignore) {
       try { st = statSync(full); } catch { continue; }
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) {
-        if (!excluded(rel + "/", DEFAULT_IGNORE_DIRS, gitignore, o.exclude)) stack.push(full);
+        if (!excluded(rel, DEFAULT_IGNORE_DIRS, gitignore, o.exclude, true)) stack.push(full);
       } else if (e.endsWith(".py") && !excluded(rel, DEFAULT_IGNORE_DIRS, gitignore, o.exclude)) {
         if (o.includeTests || !TEST_RE.test(rel)) return true;
       }
@@ -292,6 +342,9 @@ const LIB_SIGNALS = [
   ["sqlalchemy", "database", "Relational Database", "SQL"],
   ["redis", "database", "Redis Cache", "Redis"],
   ["celery", "container", "Task Queue Workers", "Celery"],
+  ["mongoose", "database", "MongoDB", "MongoDB"],
+  ["typeorm", "database", "SQL Database", "TypeORM"],
+  ["prisma", "database", "SQL Database", "Prisma"],
 ];
 function scanInfra(root, o, gitignore, allImports, routes) {
   const proposals = [];
@@ -311,7 +364,7 @@ function scanInfra(root, o, gitignore, allImports, routes) {
       let st;
       try { st = statSync(full); } catch { continue; }
       if (st.isSymbolicLink()) continue;
-      if (st.isDirectory()) { if (!excluded(rel + "/", DEFAULT_IGNORE_DIRS, gitignore, o.exclude)) stack.push(full); }
+      if (st.isDirectory()) { if (!excluded(rel, DEFAULT_IGNORE_DIRS, gitignore, o.exclude, true)) stack.push(full); }
       else if (/\.(ya?ml)$/.test(e) && !excluded(rel, DEFAULT_IGNORE_DIRS, gitignore, o.exclude)) yamlFiles.push({ full, rel });
     }
   }
@@ -327,10 +380,21 @@ function scanInfra(root, o, gitignore, allImports, routes) {
       push({ kind: "container", title: "Prometheus", technology: "Prometheus TSDB", source: rel, reason: "prometheus scrape config" });
     } else if (kind && name && /Deployment|StatefulSet|DaemonSet|Service/.test(kind)) {
       push({ kind: kind === "Service" ? "container" : "container", title: name, technology: image || kind, source: rel, reason: `k8s ${kind} ${name}` });
-    } else if (/docker-compose/.test(rel) && /services:/.test(src)) {
-      for (const m of src.matchAll(/^ {2}(\w[\w-]*):\s*$/gm)) {
-        if (/-data$/.test(m[1])) continue; // named volumes, not services
-        push({ kind: "container", title: m[1], technology: "Docker Compose service", source: rel, reason: `compose service ${m[1]}` });
+    } else if (/docker-compose|compose\.ya?ml/.test(rel) && /(^|\n)services:/.test(src)) {
+      // Only the top-level `services:` block: volumes/networks sections list
+      // similarly-indented names that are not runnable services.
+      const names = [];
+      const lines = src.split("\n");
+      let inServices = false;
+      for (const line of lines) {
+        if (/^services:\s*$/.test(line)) { inServices = true; continue; }
+        if (inServices && /^[^ \t#]/.test(line)) break; // next top-level key
+        const s = inServices && /^ {2}([\w][\w-]*):\s*(#.*)?$/.exec(line);
+        if (s) names.push(s[1]);
+      }
+      for (const name of names) {
+        if (/[-_]data$/.test(name)) continue; // named volumes, not services
+        push({ kind: "container", title: name, technology: "Docker Compose service", source: rel, reason: `compose service ${name}` });
       }
     }
   }

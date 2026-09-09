@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$(mktemp -d)"
 trap 'rm -rf "$OUT"' EXIT
 
-for fx in tiny-ts tiny-py tiny-api tiny-tsconfig; do
+for fx in tiny-ts tiny-py tiny-api tiny-tsconfig ignore-probe; do
   echo "--- fixture: $fx ---"
   node "$ROOT/skills/likec4-discover/scripts/scan.mjs" --root "$ROOT/fixtures/$fx" --out "$OUT/$fx.ir.json"
   node "$ROOT/skills/likec4-discover/scripts/emit.mjs" --in "$OUT/$fx.ir.json" --out "$OUT/$fx"
@@ -40,12 +40,32 @@ const ir = require('$OUT/tiny-tsconfig.ir.json');
 const main = ir.elements.find((e) => e.file === 'src/main.ts' && !e.symbol);
 const alias = (main.aliasImports || []).find((a) => a.from === '@app/store');
 if (!alias || alias.to !== 'src/store') { console.error('alias not resolved: ' + JSON.stringify(main.aliasImports)); process.exit(1); }
+const bare = (main.aliasImports || []).find((a) => a.from === 'store');
+if (!bare || bare.to !== 'src/store') { console.error('baseUrl bare import not resolved: ' + JSON.stringify(main.aliasImports)); process.exit(1); }
 const routes = ir.elements.filter((e) => e.symbolKind === 'route').map((e) => e.route);
 if (!routes.includes('GET /cats') || !routes.includes('POST /cats')) { console.error('missing nest routes: ' + JSON.stringify(routes)); process.exit(1); }
 const vercel = ir.elements.find((e) => e.route === 'POST /api/chat');
 if (!vercel || vercel.symbol !== 'POST') { console.error('vercel handler must keep code identifier as symbol'); process.exit(1); }
+const chained = ir.elements.filter((e) => e.file === 'src/users.route.js' && e.symbolKind === 'route').map((e) => e.route);
+for (const r of ['GET /', 'GET /:userId', 'PATCH /:userId']) {
+  if (!chained.includes(r)) { console.error('missing chained route: ' + r + ' got ' + JSON.stringify(chained)); process.exit(1); }
+}
+const arrows = ir.elements.find((e) => e.file === 'src/users.route.js' && e.symbol === 'createUser');
+if (!arrows || arrows.symbolKind !== 'function') { console.error('wrapped arrow handler not detected'); process.exit(1); }
+const plain = ir.elements.find((e) => e.file === 'src/users.route.js' && e.symbol === 'plain');
+if (plain) { console.error('plain const wrongly detected as function'); process.exit(1); }
 const actor = ir.proposals.find((p) => p.kind === 'person' && p.title === 'Client');
 if (!actor) { console.error('missing Client actor proposal'); process.exit(1); }
 console.log('OK: tsconfig alias, nest routes, actor proposal present');
 "
+echo "--- fixture assertions: ignore-probe keeps database.ts ---"
+node -e "
+const ir = require('$OUT/ignore-probe.ir.json');
+if (!ir.elements.some((e) => e.file === 'src/database.ts')) { console.error('database.ts wrongly excluded by data/ entry'); process.exit(1); }
+console.log('OK: data/ does not exclude database.ts');
+"
+echo "--- quick one-liner on tiny-api ---"
+rm -rf "$OUT/quick" && "$ROOT/skills/likec4-discover/scripts/discover.sh" quick --root "$ROOT/fixtures/tiny-api" --out "$OUT/quick" --system demo >/dev/null 2>&1 \
+  || { echo "QUICK ONE-LINER FAILED"; exit 1; }
+echo "OK: discover.sh quick passes end-to-end"
 echo "all fixtures validated"

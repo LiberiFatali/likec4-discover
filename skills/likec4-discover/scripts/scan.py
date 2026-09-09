@@ -2,17 +2,22 @@
 """scan.py — python3 stdlib only. Walks .py files, uses ast, resolves relative imports, prints JSON."""
 import argparse
 import ast
+import fnmatch
 import json
 import os
+import re
 import sys
 
 IGNORE_DIRS = {"node_modules", "dist", "build", ".venv", "__pycache__", ".git", "coverage"}
-TEST_PATH_PARTS = (".test.", ".spec.", "__tests__", "/tests/", "/test/")
+TEST_PATH_PARTS = (".test.", ".spec.", "__tests__")
+TEST_PATH_RES = (r"(^|/)tests?/",)
 
 
 def is_test(path: str) -> bool:
     p = path.replace(os.sep, "/")
     if any(t in p for t in TEST_PATH_PARTS):
+        return True
+    if any(re.search(rx, p) for rx in TEST_PATH_RES):
         return True
     base = os.path.basename(p)
     return base.startswith("test_") or base.endswith(("_test.py", "_tests.py"))
@@ -26,21 +31,54 @@ def load_gitignore(root: str):
     with open(p, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
-            if line and not line.startswith("#"):
-                out.append(line.rstrip("/"))
+            if line and not line.startswith("#") and not line.startswith("!"):
+                out.append(line)
     return out
+
+
+def ignore_match(rel: str, is_dir: bool, patterns) -> bool:
+    """Approximate gitignore matching (root .gitignore only, no negation).
+    Segment rules instead of substring: `data/` matches only a directory
+    segment named `data` (never `database.py`); bare `dist` matches any
+    segment; patterns with `/` match against the whole relative path.
+    """
+    rel = rel.replace(os.sep, "/").strip("/")
+    if not rel or rel == ".":
+        return False
+    segs = rel.split("/")
+    for pat in patterns:
+        if not pat:
+            continue
+        if "/" not in pat.strip("/"):
+            # Bare name (optional trailing `/` = dir-only): match path segments,
+            # never substrings. A dir-only pattern ignores a file only via a
+            # PARENT segment (`data/` must not kill `database.py`).
+            name = pat.strip("/")
+            scope = segs if (is_dir or not pat.endswith("/")) else segs[:-1]
+            if any(fnmatch.fnmatchcase(s, name) for s in scope):
+                return True
+        else:
+            p = pat.rstrip("/")
+            if fnmatch.fnmatchcase(rel, p):
+                return True
+            if pat.endswith("/") and (rel == p or rel.startswith(p + "/")):
+                return True
+            if pat.endswith("/") and any(fnmatch.fnmatchcase(s, p) for s in segs):
+                return True
+    return False
 
 
 def iter_py(root: str, gitignore, include_tests: bool, max_files: int):
     files = []
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS and not any(g and g in os.path.relpath(os.path.join(dirpath, d), root) for g in gitignore)]
+        dirnames[:] = [d for d in dirnames if d not in IGNORE_DIRS and not ignore_match(
+            os.path.relpath(os.path.join(dirpath, d), root), True, gitignore)]
         for fn in filenames:
             if not fn.endswith(".py"):
                 continue
             full = os.path.join(dirpath, fn)
             rel = os.path.relpath(full, root)
-            if any(g and g in rel for g in gitignore):
+            if ignore_match(rel, False, gitignore):
                 continue
             if not include_tests and is_test(rel):
                 continue
@@ -177,10 +215,10 @@ def main() -> int:
     ap.add_argument("--max-files", type=int, default=2000)
     ap.add_argument("--include-tests", action="store_true")
     ap.add_argument("--exclude", action="append", default=[],
-                    help="repeatable substring patterns merged with default ignores")
+                    help="repeatable glob patterns merged with default ignores")
     args = ap.parse_args()
     gitignore = load_gitignore(args.root)
-    gitignore = gitignore + [e.replace("*", "") for e in args.exclude]
+    gitignore = gitignore + list(args.exclude)  # glob-capable, merged with defaults
     files = iter_py(args.root, gitignore, args.include_tests, args.max_files)
     if len(files) > args.max_files:
         print(f"over budget: {len(files)} files > --max-files {args.max_files}", file=sys.stderr)

@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "skills", "like
 from scan import (  # noqa: E402
     call_map,
     called_names,
+    ignore_match,
     is_test,
     module_of,
     resolve_relative,
@@ -33,6 +34,25 @@ class TestIsTest(unittest.TestCase):
         self.assertFalse(is_test("srv/latest.py"))  # contains 'test' but is not a test
         self.assertFalse(is_test("srv/app.py"))
         self.assertFalse(is_test("srv/contest.py"))
+
+
+class TestIgnoreMatch(unittest.TestCase):
+    def test_dir_pattern_never_matches_file_substring(self):
+        pats = ["data/", "env/", ".venv", "dist", "*.log"]
+        # the dogfood bug: `data/` killed `database.py`, `env/` killed `alembic/env.py`
+        self.assertFalse(ignore_match("backend/api/database.py", False, pats))
+        self.assertFalse(ignore_match("backend/api/alembic/env.py", False, pats))
+        self.assertTrue(ignore_match("backend/data/dump.json", False, pats))
+        self.assertTrue(ignore_match("backend/data", True, pats))
+        self.assertTrue(ignore_match("a/.venv/lib/x.py", False, pats))
+        self.assertTrue(ignore_match("a/dist/b.js", False, pats))
+        self.assertTrue(ignore_match("debug.log", False, pats))
+        self.assertFalse(ignore_match("catalog.py", False, pats))
+
+    def test_slashed_and_bare_patterns(self):
+        self.assertTrue(ignore_match("build/output/x", False, ["build/output/"]))
+        self.assertTrue(ignore_match("src/app/test_helper.py", False, ["test_*.py"]))
+        self.assertFalse(ignore_match("src/latest.py", False, ["test_*.py"]))
 
 
 class TestModuleOf(unittest.TestCase):
