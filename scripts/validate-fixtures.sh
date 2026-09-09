@@ -42,6 +42,8 @@ const alias = (main.aliasImports || []).find((a) => a.from === '@app/store');
 if (!alias || alias.to !== 'src/store') { console.error('alias not resolved: ' + JSON.stringify(main.aliasImports)); process.exit(1); }
 const routes = ir.elements.filter((e) => e.symbolKind === 'route').map((e) => e.route);
 if (!routes.includes('GET /cats') || !routes.includes('POST /cats')) { console.error('missing nest routes: ' + JSON.stringify(routes)); process.exit(1); }
+const vercel = ir.elements.find((e) => e.route === 'POST /api/chat');
+if (!vercel || vercel.symbol !== 'POST') { console.error('vercel handler must keep code identifier as symbol'); process.exit(1); }
 const actor = ir.proposals.find((p) => p.kind === 'person' && p.title === 'Client');
 if (!actor) { console.error('missing Client actor proposal'); process.exit(1); }
 console.log('OK: tsconfig alias, nest routes, actor proposal present');
