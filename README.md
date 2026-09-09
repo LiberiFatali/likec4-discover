@@ -1,5 +1,7 @@
 # likec4-discover
 
+[![ci](https://github.com/LiberiFatali/likec4-discover/actions/workflows/ci.yml/badge.svg)](https://github.com/LiberiFatali/likec4-discover/actions)
+
 Agent Skill that scans a repo (TypeScript/JavaScript or Python) and generates a validated LikeC4 architecture model (`specification` + `model` + `views`). Deterministic scripts do the scanning and emitting; the agent only assigns names, grouping, and titles — it never writes DSL directly.
 
 ## Install
