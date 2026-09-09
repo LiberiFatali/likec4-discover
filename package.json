@@ -1,0 +1,20 @@
+{
+  "name": "likec4-discover",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "scan": "node skills/likec4-discover/scripts/scan.mjs --help",
+    "test": "npm run test:node && npm run test:py",
+    "test:node": "node --test test/*.test.mjs",
+    "test:py": "python3 -m unittest discover -s test -p \"*_test.py\"",
+    "check:skill": "node scripts/check-skill.mjs",
+    "validate:fixtures": "bash scripts/validate-fixtures.sh"
+  },
+  "devDependencies": {
+    "likec4": "^1.59.3"
+  }
+}
