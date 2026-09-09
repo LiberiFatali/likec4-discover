@@ -17,6 +17,8 @@ Quick one-liner (best-effort: raw titles, all proposals promoted, nothing pruned
 <skill>/scripts/discover.sh quick --root <repo> --out ./generated --system <name>
 ```
 
+Defaults when the user gives no args: `--root .`, `--out ./generated`, `--system <basename-of-root-sanitized>` (fallback `cloud`). Run quick immediately without asking; only ask when overwriting an existing `--out` dir or exceeding budgets.
+
 For curated output, run the steps below with manual labeling in between.
 
 Requires `likec4-dsl` skill for DSL reference (via `npx skills add https://likec4.dev/`). This skill is write-path only (`scan -> IR -> .c4`); use `@likec4/mcp` for read-path queries.
