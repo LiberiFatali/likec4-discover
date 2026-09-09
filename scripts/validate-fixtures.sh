@@ -68,4 +68,20 @@ echo "--- quick one-liner on tiny-api ---"
 rm -rf "$OUT/quick" && "$ROOT/skills/likec4-discover/scripts/discover.sh" quick --root "$ROOT/fixtures/tiny-api" --out "$OUT/quick" --system demo >/dev/null 2>&1 \
   || { echo "QUICK ONE-LINER FAILED"; exit 1; }
 echo "OK: discover.sh quick passes end-to-end"
+echo "--- quick --granularity file on tiny-api (file-level + routes) ---"
+rm -rf "$OUT/quick-file" && "$ROOT/skills/likec4-discover/scripts/discover.sh" quick --root "$ROOT/fixtures/tiny-api" --out "$OUT/quick-file" --system demo --granularity file >/dev/null 2>&1 \
+  || { echo "QUICK FILE GRANULARITY FAILED"; exit 1; }
+node -e "
+const fs = require('fs');
+const model = fs.readFileSync('$OUT/quick-file/model.c4', 'utf8');
+const comps = (model.match(/= component /g) || []).length;
+if (comps > 12) { console.error('file granularity did not prune: ' + comps + ' components'); process.exit(1); }
+for (const r of ['POST /predict', 'GET /health']) {
+  if (!model.includes(r)) { console.error('route lost in file mode: ' + r); process.exit(1); }
+}
+if (model.includes('load_model = component') || model.includes('decode_image = component')) { console.error('helper symbol leaked into file mode'); process.exit(1); }
+console.log('OK: file granularity keeps routes, drops helpers (' + comps + ' components)');
+"
+npx -y likec4@1.59.3 validate --no-layout --json "$OUT/quick-file" | \
+  node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const r=JSON.parse(s);if(!r.valid||r.stats.filteredErrors!==0){console.error('VALIDATION FAILED');process.exit(1)}console.log('OK: file-mode output validates')})"
 echo "all fixtures validated"

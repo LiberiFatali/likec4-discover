@@ -15,6 +15,8 @@ Quick one-liner (best-effort: raw titles, all proposals promoted, nothing pruned
 
 ```bash
 <skill>/scripts/discover.sh quick --root <repo> --out ./generated --system <name>
+# flooded diagram (too many elements)? use file-level + routes instead:
+<skill>/scripts/discover.sh quick --root <repo> --out ./generated --system <name> --granularity file
 ```
 
 Defaults when the user gives no args: `--root .`, `--out ./generated`, `--system <basename-of-root-sanitized>` (fallback `cloud`). Run quick immediately without asking; only ask when overwriting an existing `--out` dir or exceeding budgets.
@@ -34,12 +36,14 @@ Run from the repo root:
 # flags: --root <dir> (default .), --out <file|-> (default stdout),
 #   --max-files 2000, --include-tests (default false),
 #   --include "<glob>" (repeatable, replaces defaults),
-#   --exclude "<glob>" (repeatable, merges with defaults)
+#   --exclude "<glob>" (repeatable, merges with defaults),
+#   --no-symbols | --symbol-kinds <csv> (file-level granularity, see below)
 # (calls scripts/scan.mjs; same flags)
 ```
 
-- `scan.mjs` walks TS/JS with node stdlib (import regex + exported class/function names for titles) and spawns `scan.py --root <dir>` once for Python (`ast` stdlib only; skipped automatically when the repo has no `.py` files).
+- `scan.mjs` walks TS/JS with node stdlib (import regex + exported class/function names for titles) and spawns `scan.py --root <dir>` once for Python (`ast` stdlib only; skipped automatically when the repo has no `.py` files). Granularity flags (`--no-symbols`, `--symbol-kinds`) are forwarded to `scan.py`.
 - Granularity (default): file = parent element; module classes, top-level functions, and route handlers (FastAPI decorators / Express-style registrations) = nested components with `parent` + `line` evidence. Symbol-free files fall back to file = component.
+- Too many elements? When a scan yields dozens of files, per-function symbols flood the diagram with helpers (`pad2`, `sleep`, `esc`, ...). Prefer file-level + routes: `quick --granularity file`, or step by step: `scan --symbol-kinds route` → `auto-label --keep-symbols route` → `emit --drop-symbols`. Routes always survive pruning (they carry the HTTP surface); plain functions/variables/classes are dropped. Rule of thumb: switch to `file` granularity when any single file contributes >5 symbols or the labeled IR exceeds ~40 elements.
 - Infra/actor candidates arrive as `proposals[]` (with `source` evidence) — promote or drop each, never auto-add.
 - Default ignores: `node_modules, dist, build, .venv, __pycache__, .git` + symlinks + `.gitignore` rules. `--include` replaces default extensions; `--exclude` merges.
 - Output envelope: `{ "elements": [...] }` per `references/ir-schema.md`. Cap ~200 elements; script exits non-zero with a clear error when over budget (narrow `--include` or raise budget explicitly).
@@ -60,6 +64,9 @@ Run from the repo root:
 
 ```bash
 <skill>/scripts/discover.sh emit --in /tmp/ir.labeled.json --out ./generated --system <name>
+# file-level + routes safety net (drops helper symbols even if the labeled IR
+# still contains them):
+# <skill>/scripts/discover.sh emit --in /tmp/ir.labeled.json --out ./generated --system <name> --drop-symbols
 # emits spec.c4/model.c4/views.c4, runs --check when likec4 is installed,
 # then validates with the likec4 CLI when available
 ```

@@ -10,4 +10,5 @@
 | `include *` shows only top level | expected for unscoped views | add scoped `view of <system>` (emitted by default) |
 | `scan.py failed` in scan output | bad Python syntax / missing python3 | fix file or install `python3`; TS/JS side still completes |
 | over budget (>200 elements) | large repo | narrow `--include`, add `--exclude`, or confirm raising the cap |
+| diagram flooded with helpers (`pad2`, `sleep`, ...) | per-function symbols on a large repo (under the 200 cap but unreadable) | re-run with file-level + routes: `quick --granularity file`, or `scan --symbol-kinds route` → `auto-label --keep-symbols route` → `emit --drop-symbols` |
 | `valid: false` with layout errors | layout drift, not semantic | re-run with `--no-layout` for the semantic gate |

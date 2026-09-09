@@ -155,8 +155,16 @@ def call_map(tree) -> dict:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
-def scan_file(root: str, full: str):
-    """Return a list: one file-parent record plus one record per symbol (class/function/route)."""
+def scan_file(root: str, full: str, no_symbols: bool = False, symbol_kinds=None):
+    """Return a list: one file-parent record plus one record per symbol (class/function/route).
+
+    no_symbols / symbol_kinds filter symbol children (file parent always kept):
+    file-level granularity for large repos where per-function nodes flood the
+    diagram. symbol_kinds is a subset of {"class", "function", "route"}.
+    """
+    keep = None if symbol_kinds is None else set(symbol_kinds)
+    if no_symbols and keep is None:
+        keep = set()
     rel = os.path.relpath(full, root).replace(os.sep, "/")
     try:
         with open(full, encoding="utf-8", errors="replace") as f:
@@ -199,6 +207,8 @@ def scan_file(root: str, full: str):
         "extends": [], "calls": [], "route": None,
     }]
     for name, kind, lineno, ext, calls, route in symbols:
+        if keep is not None and kind not in keep:
+            continue
         records.append({
             "file": rel, "lang": "py", "module": f"{mod}.{name}",
             "title": name, "symbol": name, "symbolKind": kind,
@@ -216,7 +226,16 @@ def main() -> int:
     ap.add_argument("--include-tests", action="store_true")
     ap.add_argument("--exclude", action="append", default=[],
                     help="repeatable glob patterns merged with default ignores")
+    ap.add_argument("--no-symbols", action="store_true",
+                    help="file-level only: skip class/function symbols")
+    ap.add_argument("--symbol-kinds", default=None,
+                    help="comma list of symbol kinds to keep (subset of class,function,route)")
     args = ap.parse_args()
+    kinds = None
+    if args.symbol_kinds is not None:
+        kinds = {k.strip() for k in args.symbol_kinds.split(",") if k.strip()}
+    elif args.no_symbols:
+        kinds = set()
     gitignore = load_gitignore(args.root)
     gitignore = gitignore + list(args.exclude)  # glob-capable, merged with defaults
     files = iter_py(args.root, gitignore, args.include_tests, args.max_files)
@@ -225,7 +244,7 @@ def main() -> int:
         return 3
     elements = []
     for full in files:
-        recs = scan_file(args.root, full)
+        recs = scan_file(args.root, full, symbol_kinds=kinds)
         if recs is not None:
             elements.extend(recs)
     payload = json.dumps({"elements": elements}, indent=2)

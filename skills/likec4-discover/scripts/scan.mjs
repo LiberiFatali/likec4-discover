@@ -22,11 +22,16 @@ Options:
   --include <glob>    repeatable; if given, replaces default extensions
   --exclude <glob>    repeatable; merged with default ignores (glob match)
   --include-tests     include test files (default false)
+  --no-symbols        file-level only: skip class/function symbols (routes kept
+                      only with --symbol-kinds route; use for large repos where
+                      per-function nodes flood the diagram)
+  --symbol-kinds <csv> keep only these symbol kinds (subset of
+                      class,function,variable,route; default all)
   -h, --help          show this help`);
 }
 
 function parseArgs(argv) {
-  const o = { root: ".", out: "-", maxFiles: 2000, include: [], exclude: [], includeTests: false, help: false };
+  const o = { root: ".", out: "-", maxFiles: 2000, include: [], exclude: [], includeTests: false, noSymbols: false, symbolKinds: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--root") o.root = argv[++i];
@@ -35,6 +40,8 @@ function parseArgs(argv) {
     else if (a === "--include") o.include.push(argv[++i]);
     else if (a === "--exclude") o.exclude.push(argv[++i]);
     else if (a === "--include-tests") o.includeTests = true;
+    else if (a === "--no-symbols") o.noSymbols = true;
+    else if (a === "--symbol-kinds") o.symbolKinds = String(argv[++i]).split(",").map((s) => s.trim()).filter(Boolean);
     else if (a === "-h" || a === "--help") o.help = true;
   }
   return o;
@@ -272,9 +279,11 @@ for (const full of files) {
     barrelTargets: barrelTargets || undefined,
   });
   const seen = new Set();
+  const keepKind = (kind) => !args.noSymbols && (!args.symbolKinds || args.symbolKinds.includes(kind));
   for (const s of symbols) {
     if (seen.has(s.name)) continue;
     seen.add(s.name);
+    if (!keepKind(s.kind)) continue;
     elements.push({
       file: rel, lang: "ts", module: `${mod}.${s.name}`,
       title: s.name, symbol: s.name, symbolKind: s.kind, line: s.line, parent: rel,
@@ -315,6 +324,8 @@ if (!hasPyFiles(args.root, args, gitignore)) {
 } else try {
   const r = spawnSync("python3", [scanPy, "--root", args.root,
     ...(args.includeTests ? ["--include-tests"] : []),
+    ...(args.noSymbols ? ["--no-symbols"] : []),
+    ...(args.symbolKinds ? ["--symbol-kinds", args.symbolKinds.join(",")] : []),
     ...args.exclude.flatMap((e) => ["--exclude", e]),
   ], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 });
   if (r.status !== 0) {

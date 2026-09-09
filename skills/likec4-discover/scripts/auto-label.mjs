@@ -9,13 +9,17 @@ import { join, dirname, normalize } from "node:path";
 import { sanitize } from "./emit.mjs";
 
 function parseArgs(argv) {
-  const o = { in: "", out: "", system: "cloud" };
+  const o = { in: "", out: "", system: "cloud", keepSymbols: null };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--in") o.in = argv[++i];
     else if (argv[i] === "--out") o.out = argv[++i];
     else if (argv[i] === "--system") o.system = argv[++i];
+    else if (argv[i] === "--drop-symbols") o.keepSymbols = ["route"];
+    else if (argv[i] === "--keep-symbols") o.keepSymbols = String(argv[++i]).split(",").map((s) => s.trim()).filter(Boolean);
     else if (argv[i] === "-h" || argv[i] === "--help") {
-      console.log("Usage: node auto-label.mjs --in <ir.json> --out <labeled.json> --system <name>");
+      console.log("Usage: node auto-label.mjs --in <ir.json> --out <labeled.json> --system <name> [--drop-symbols | --keep-symbols <csv>]");
+      console.log("  --drop-symbols: file-level + routes only (shorthand for --keep-symbols route).");
+      console.log("  --keep-symbols <csv>: keep only these symbolKinds (e.g. route,class).");
       process.exit(0);
     }
   }
@@ -42,7 +46,14 @@ function resolveRel(fromFile, spec, exists) {
 
 const args = parseArgs(process.argv.slice(2));
 const ir = JSON.parse(readFileSync(args.in, "utf8"));
-const elements = ir.elements ?? [];
+let elements = ir.elements ?? [];
+if (args.keepSymbols) {
+  const keep = new Set(args.keepSymbols);
+  const kindOf = (e) => e.symbolKind || (e.route ? "route" : "");
+  const before = elements.length;
+  elements = elements.filter((e) => !e.symbol || keep.has(kindOf(e)));
+  console.error(`auto-label.mjs: dropped ${before - elements.length} symbol elements (keep: ${args.keepSymbols.join(",") || "none"})`);
+}
 const byFile = new Map();
 for (const e of elements) if (!e.symbol && !byFile.has(e.file)) byFile.set(e.file, e);
 

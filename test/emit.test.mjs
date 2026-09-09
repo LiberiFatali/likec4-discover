@@ -51,6 +51,10 @@ describe("parseArgs", () => {
     assert.equal(parseArgs(["--in", "a", "--out", "b", "--check"]).check, true);
     assert.equal(parseArgs(["--in", "a", "--out", "b"]).check, false);
   });
+  it("parses --drop-symbols", () => {
+    assert.equal(parseArgs(["--in", "a", "--out", "b", "--drop-symbols"]).dropSymbols, true);
+    assert.equal(parseArgs(["--in", "a", "--out", "b"]).dropSymbols, false);
+  });
 });
 
 describe("checkModel", () => {
@@ -113,5 +117,18 @@ describe("emitModel", () => {
     const predict = out.elements.find((e) => e.symbol === "predict");
     assert.equal(predict.parentFqn, "demo.serving.app");
     assert.match(out.model, /predict = component 'predict'/);
+  });
+  it("dropSymbols keeps file parents + routes, drops helper symbols", () => {
+    const out = emitModel(IR, { system: "demo", dropSymbols: true });
+    const symbols = out.elements.map((e) => e.symbol).filter(Boolean);
+    assert.deepEqual(symbols, ["predict"]); // route kept, decode_image helper dropped
+    assert.match(out.model, /predict = component 'predict'/);
+    assert.ok(!out.model.includes("decode_image"), "helper symbol not rendered");
+    assert.match(out.notes.join("\n"), /dropped 1 symbol element/);
+  });
+  it("dropSymbols keeps symbolKind-less file parents", () => {
+    const out = emitModel({ elements: [IR.elements[0]] }, { system: "demo", dropSymbols: true });
+    assert.ok(out.elements.every((e) => !e.symbol), "no symbol elements survive");
+    assert.ok(out.elements.some((e) => e.fqn === "demo.serving.app"), "file parent kept");
   });
 });

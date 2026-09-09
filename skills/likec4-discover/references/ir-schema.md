@@ -2,6 +2,8 @@
 
 Default granularity: file = parent element; module classes, top-level functions, and route handlers = nested components. Symbol-free files fall back to file = component.
 
+File-level + routes (for large repos): `scan --symbol-kinds route` (or `--no-symbols` for strict file-only), `auto-label --keep-symbols route` (shorthand `--drop-symbols`), `emit --drop-symbols`. Routes always survive pruning; helper functions/variables/classes are dropped and their `calls` fold away with them (file-level `imports` edges are unaffected).
+
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `fqn` | string | emit fills if empty | `<system>.<area>.<file>[.<symbol>]`, segments match `[A-Za-z_][A-Za-z0-9_-]*` |

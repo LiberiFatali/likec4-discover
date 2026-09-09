@@ -132,6 +132,21 @@ class TestScanFile(unittest.TestCase):
                 f.write("def broken(:\n")
             self.assertIsNone(scan_file(root, full))
 
+    def test_symbol_filters(self):
+        with tempfile.TemporaryDirectory() as root:
+            full = os.path.join(root, "app.py")
+            with open(full, "w") as f:
+                f.write(self.SRC)
+            kinds = {r.get("symbolKind") for r in scan_file(root, full, symbol_kinds={"route"})}
+            self.assertIn("route", kinds)
+            self.assertNotIn("class", kinds)
+            self.assertNotIn("function", kinds)
+            file_only = scan_file(root, full, no_symbols=True)
+            self.assertEqual(len(file_only), 1)  # file parent only
+            self.assertIsNone(file_only[0].get("symbol"))
+            routes_only = scan_file(root, full, symbol_kinds=set())
+            self.assertEqual(len(routes_only), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

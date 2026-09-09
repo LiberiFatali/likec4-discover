@@ -12,8 +12,10 @@ import { fileURLToPath } from "node:url";
 
 export function help() {
   console.log(`emit.mjs — emit LikeC4 sources from labeled IR
-Usage: node emit.mjs --in <ir.json> --out <dir> [--system <name>] [--check]
+Usage: node emit.mjs --in <ir.json> --out <dir> [--system <name>] [--check] [--drop-symbols]
 Fails closed on duplicate FQN, bad identifier, or unknown relationship kind.
+--drop-symbols keeps file-level elements + route handlers only (drops helper
+class/function/variable symbols) — use when the model has too many elements.
 --check runs LikeC4.fromSource().getErrors() when the likec4 package is
 installed (skipped with a note otherwise); template output stays canonical.`);
 }
@@ -38,13 +40,14 @@ export const sanitize = (s) => {
 export const isIdent = (s) => IDENT_RE.test(s);
 
 export function parseArgs(argv) {
-  const o = { in: "", out: "", system: "cloud", check: false };
+  const o = { in: "", out: "", system: "cloud", check: false, dropSymbols: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--in") o.in = argv[++i];
     else if (a === "--out") o.out = argv[++i];
     else if (a === "--system") o.system = argv[++i];
     else if (a === "--check") o.check = true;
+    else if (a === "--drop-symbols") o.dropSymbols = true;
     else if (a === "-h" || a === "--help") { help(); process.exit(0); }
   }
   if (!o.in || !o.out) { help(); process.exit(2); }
@@ -132,9 +135,19 @@ export function emitModel(ir, opts = {}) {
   const notes = [];
   const warn = (msg) => notes.push(msg);
   const fail = (msg) => { throw new EmitError(msg); };
-  const list = Array.isArray(ir) ? ir : ir.elements ?? [];
+  let list = Array.isArray(ir) ? ir : ir.elements ?? [];
   if (!list.length) fail("empty IR");
   if (list.length > 200) warn(`${list.length} elements > 200 default cap`);
+  if (opts.dropSymbols) {
+    const before = list.length;
+    // File-level + routes: drop symbol children (parent != null) except routes,
+    // which carry the HTTP surface (rendered as description). symbolKind is the
+    // classifier; a bare `route` field counts as route for hand-made IR.
+    const kindOf = (e) => e.symbolKind || (e.route ? "route" : "");
+    list = list.filter((e) => !e.parent || !e.symbol || kindOf(e) === "route");
+    const n = before - list.length;
+    if (n) warn(`dropped ${n} symbol elements (--drop-symbols: file-level + routes)`);
+  }
 
   const seen = new Set();
   // Parent refs up front (single pass): file paths + explicit FQNs that have children.
@@ -319,7 +332,7 @@ async function main() {
   const raw = JSON.parse(readFileSync(args.in, "utf8"));
   let out;
   try {
-    out = emitModel(raw, { system: args.system });
+    out = emitModel(raw, { system: args.system, dropSymbols: args.dropSymbols });
   } catch (e) {
     if (e instanceof EmitError) { console.error(`emit.mjs: ${e.message}`); process.exit(4); }
     throw e;
